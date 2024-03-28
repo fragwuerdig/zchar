@@ -279,12 +279,13 @@ mod tests {
         let vec6: Vec<u8> = vec![0x5a];
         let vec7: Vec<u8> = vec![];
         
+        // zpacked strings are padded out with 5s
         let exp1: Vec<u8> = vec![0x17, 0x45, 0xe8, 0xba];
-        let exp2: Vec<u8> = vec![0x68, 0xba, 0x97, 0x40];
-        let exp3: Vec<u8> = vec![0x17, 0x45, 0xe8, 0x00];
+        let exp2: Vec<u8> = vec![0x68, 0xba, 0x97, 0x45];
+        let exp3: Vec<u8> = vec![0x17, 0x45, 0xe8, 0xa5];
         let exp4: Vec<u8> = vec![0xe8, 0xba];
-        let exp5: Vec<u8> = vec![0x97, 0x40];
-        let exp6: Vec<u8> = vec![0xe8, 0x00];
+        let exp5: Vec<u8> = vec![0x97, 0x45];
+        let exp6: Vec<u8> = vec![0xe8, 0xa5];
         let exp7: Vec<u8> = vec![];
 
         let packed1 = zpack(vec1);
