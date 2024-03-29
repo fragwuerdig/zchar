@@ -1,4 +1,50 @@
 #[derive(Debug)]
+pub struct ZOperands {
+    // offset inside the instruction where operands start
+    offset: u8,
+    operands: [Option<ZOperand>; 8]
+}
+
+impl PartialEq for ZOperands {
+    fn eq(&self, other: &Self) -> bool {
+        let mut is_eq = self.offset == other.offset;
+        for i in 0..7 {
+            is_eq = is_eq && self.operands[i] == other.operands[i];
+        }
+        is_eq
+    }
+}
+
+impl ZOperands {
+    pub fn opcount(&self) -> u8 {
+        let mut count = 0;
+        for operand in &self.operands {
+            if operand.is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        count
+    }
+
+    pub fn memsize(&self) -> usize {
+        let mut size = 0;
+        for operand in &self.operands {
+            if ! operand.is_some() {
+                break;
+            }
+            match operand.unwrap() {
+                ZOperand::Large { value } => { size += 2; },
+                ZOperand::Small { value } => { size += 1; },
+                ZOperand::Variable { value } => { size += 1; },
+            }
+        }
+        size
+    }
+}
+
+#[derive(Debug)]
 pub struct ZInstruction {
     opcode: u8,
     operand_count: u8,
@@ -125,7 +171,7 @@ fn determine_var_operands(optypes: [u8; 2], ops: Vec<u8>) -> [Option<ZOperand>; 
     operands
 }
 
-pub fn decode_instruction(input: Vec<u8>) -> Option<ZInstruction> {
+/*pub fn decode_instruction(input: Vec<u8>) -> Option<ZInstruction> {
     if input.len() < 1 {
         return None;
     }
@@ -340,20 +386,225 @@ pub fn decode_instruction(input: Vec<u8>) -> Option<ZInstruction> {
             })
         },
     }
+}*/
+
+/// Decode operands from input vector (which is
+/// supposed to contain the opcode byte and the
+/// operand type bytes). Output a `ZOperands`
+/// structure
+pub fn decode_operands(input: Vec<u8>) -> Option<ZOperands> {
+    if input.len() < 1 {
+        return None;
+    }
+    let opcode = input[0];
+    match opcode {
+        // long form instruction - 2OP - small constant - small constant
+        0x00..=0x1f => {
+            if input.len() < 3 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Small{ value: input[1] }),
+                    Some(ZOperand::Small{ value: input[2] }),
+                    None, None, None, None, None, None
+                ]
+            })
+        },
+
+        // long form instruction - 2OP - small constant - variable
+        0x20..=0x3f => { 
+            if input.len() < 3 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Small{ value: input[1] }),
+                    Some(ZOperand::Variable{ value: input[2]}),
+                    None, None, None, None, None, None
+                ]
+            })
+        },
+
+        // long form instruction - 2OP - variable - small constant
+        0x40..=0x5f => { 
+            if input.len() < 3 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Variable { value: input[1] }),
+                    Some(ZOperand::Small{ value: input[2]}),
+                    None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // long form instruction - 2OP - variable - variable
+        0x60..=0x7f => { 
+            if input.len() < 3 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Variable { value: input[1] }),
+                    Some(ZOperand::Variable { value: input[2] }),
+                    None, None, None, None, None, None
+                ],
+            })
+        },
+
+        // short form instruction - 1OP - large constant
+        0x80..=0x8f => { 
+            if input.len() < 3 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Large {
+                        value: [input[1], input[2]],
+                    }),
+                    None, None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // short form instruction - 1OP - small constant
+        0x90..=0x9f => { 
+            if input.len() < 2 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Small {
+                        value: input[1],
+                    }),
+                    None, None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // short form instruction - 1OP - variable
+        0xa0..=0xaf => { 
+            if input.len() < 2 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    Some(ZOperand::Variable {
+                        value: input[1],
+                    }),
+                    None, None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // short form instruction - 0OP
+        0xb0..=0xbd | 0xbf => { 
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    None, None, None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // extended form instruction
+        // TODO
+        0xbe => {
+            if input.len() < 2 {
+                return None;
+            }
+            Some(ZOperands{
+                offset: 1,
+                operands: [
+                    None, None, None, None, None, None, None, None
+                ],
+            })
+        },
+        
+        // variable form instruction - 2OP - var operand types
+        0xc0..=0xdf => {
+            if input.len() < 2 {
+                return None;
+            }
+            let opcode = input[0] & 0b11111;
+            let optype0 = (input[1] & 0b11110000) | 0b00001111;
+            let optypes = [optype0 , 0b11111111];
+            let (opcount, memsize) = determine_operand_size(optypes);
+            if opcount < 2 {
+                return None;
+            }
+            if input.len() < (memsize + 2) as usize {
+                return None;
+            }
+            let operands = determine_var_operands(
+                optypes,
+                input.clone().split_off(2),
+            );
+            Some(ZOperands{
+                offset: 2,
+                operands: operands,
+            })
+        },
+        
+        // variable form instruction - VAR
+        0xe0..=0xff => { 
+            let opcode = input[0] & 0b11111;
+            let mut offset = 0u8;
+            let optypes = match opcode {
+                12 | 26 => {
+                    if input.len() < 3 {
+                        return None
+                    }
+                    offset += 3;
+                    [input[1], input[2]]
+                }
+                _ => {
+                    if input.len() < 2 {
+                        return None
+                    }
+                    offset += 2;
+                    [input[1], 0b11111111]
+                }
+            };
+            let (opcount, memsize) = determine_operand_size(optypes);
+            if input.len() < (memsize + offset) as usize {
+                return None;
+            }
+            let operands = determine_var_operands(
+                optypes,
+                input.clone().split_off(offset as usize),
+            );
+            Some(ZOperands{
+                offset: offset,
+                operands: operands,
+            })
+        },
+    }
+}
+
+fn execute_instruction(instruction: ZInstruction) {
+    // TODO
 }
 
 mod tests {
-    use crate::zcode::{ZInstruction, ZOperand};
-    use super::decode_instruction;
+    use crate::zcode::{decode_operands, ZInstruction, ZOperand, ZOperands};
 
     #[test]
-    fn test_decode_detects_long_form_2op_small_small(){
+    fn test_decode_operands_detects_long_form_2op_small_small(){
         for i in 0x00..0x1f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a, 0xa5]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b11111,
-                operand_count: 2,
+            let decoded = decode_operands(vec![i, 0x5a, 0xa5]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Small{value: 0x5a}),
                     Some(ZOperand::Small{value: 0xa5}),
@@ -363,20 +614,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]);
+            let decoded = decode_operands(vec![i, 0x5a]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_long_form_2op_small_variable(){
+    fn test_decode_operands_detects_long_form_2op_small_variable(){
         for i in 0x20..0x3f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a, 0xa5]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b11111,
-                operand_count: 2,
+            let decoded = decode_operands(vec![i, 0x5a, 0xa5]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Small{value: 0x5a}),
                     Some(ZOperand::Variable {value: 0xa5}),
@@ -386,20 +636,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]);
+            let decoded = decode_operands(vec![i, 0x5a]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_long_form_2op_variable_small(){
+    fn test_decode_operands_detects_long_form_2op_variable_small(){
         for i in 0x40..0x5f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a, 0xa5]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b11111,
-                operand_count: 2,
+            let decoded = decode_operands(vec![i, 0x5a, 0xa5]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Variable{value: 0x5a}),
                     Some(ZOperand::Small{value: 0xa5}),
@@ -409,20 +658,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]);
+            let decoded = decode_operands(vec![i, 0x5a]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_long_form_2op_variable_variable(){
+    fn test_decode_operands_detects_long_form_2op_variable_variable(){
         for i in 0x60..0x7f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a, 0xa5]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b11111,
-                operand_count: 2,
+            let decoded = decode_operands(vec![i, 0x5a, 0xa5]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Variable{value: 0x5a}),
                     Some(ZOperand::Variable{value: 0xa5}),
@@ -432,20 +680,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]);
+            let decoded = decode_operands(vec![i, 0x5a]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_short_form_1op_large(){
+    fn test_decode_operands_detects_short_form_1op_large(){
         for i in 0x80..0x8f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a, 0xa5]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b1111,
-                operand_count: 1,
+            let decoded = decode_operands(vec![i, 0x5a, 0xa5]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Large{value: [0x5a, 0xa5]}),
                     None, None, None, None, None, None, None
@@ -454,20 +701,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]);
+            let decoded = decode_operands(vec![i, 0x5a]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_short_form_1op_small(){
+    fn test_decode_operands_detects_short_form_1op_small(){
         for i in 0x90..0x9f {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b1111,
-                operand_count: 1,
+            let decoded = decode_operands(vec![i, 0x5a]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Small{value: 0x5a}),
                     None, None, None, None, None, None, None
@@ -476,20 +722,19 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i]);
+            let decoded = decode_operands(vec![i]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_short_form_1op_variable(){
+    fn test_decode_operands_detects_short_form_1op_variable(){
         for i in 0xa0..0xaf {
             // correct number of operands
-            let decoded = decode_instruction(vec![i, 0x5a]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b1111,
-                operand_count: 1,
+            let decoded = decode_operands(vec![i, 0x5a]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     Some(ZOperand::Variable{value: 0x5a}),
                     None, None, None, None, None, None, None
@@ -498,24 +743,23 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![i]);
+            let decoded = decode_operands(vec![i]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_short_form_0op(){
+    fn test_decode_operands_detects_short_form_0op(){
         for i in 0xb0..0xbf {
             if i == 0xbe {
                 // skip extended instructions
                 continue;
             }
             // correct number of operands
-            let decoded = decode_instruction(vec![i]).unwrap();
-            let expected = ZInstruction {
-                opcode: i & 0b1111,
-                operand_count: 0,
+            let decoded = decode_operands(vec![i]).unwrap();
+            let expected = ZOperands {
+                offset: 1,
                 operands: [
                     None, None, None, None, None, None, None, None
                 ]
@@ -523,20 +767,20 @@ mod tests {
             assert_eq!(decoded, expected);
             
             // wrong number of operands
-            let decoded = decode_instruction(vec![]);
+            let decoded = decode_operands(vec![]);
             let expected: Option<_> = None;
             assert_eq!(decoded, expected);
         }
     }
 
     #[test]
-    fn test_decode_detects_variable_form_2op_var(){
+    fn test_decode_operands_detects_variable_form_2op_var(){
         for i in 0xc0..=0xdf {
             let opcode: u8 = i & 0b11111;
 
             // omitting all operands is illegal
             let optypes = 0b11111111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
@@ -550,7 +794,7 @@ mod tests {
             // only 1 operand provided is illegal
             let opcode: u8 = i & 0b11111;
             let optypes = 0b00111111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
@@ -563,13 +807,12 @@ mod tests {
 
             // provide 2 large constants
             let optypes = 0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03, 0x04,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large { value: [0x03, 0x04] }),
@@ -580,7 +823,7 @@ mod tests {
 
             // provide 2 large constants - but not enough to read from
             let optypes = 0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03,
             ]);
@@ -588,13 +831,12 @@ mod tests {
 
             // provide 2 small constants
             let optypes = 0b01011111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x03,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands{
+                offset: 2,
                 operands: [
                     Some(ZOperand::Small { value: 0x01 }),
                     Some(ZOperand::Small { value: 0x03 }),
@@ -605,7 +847,7 @@ mod tests {
 
             // provide 2 small constants - but not enough to read from
             let optypes = 0b01011111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01,
             ]);
@@ -613,13 +855,12 @@ mod tests {
 
             // provide 2 variables
             let optypes = 0b10101111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x03,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Variable { value: 0x01 }),
                     Some(ZOperand::Variable { value: 0x03 }),
@@ -630,7 +871,7 @@ mod tests {
 
             // provide 2 variables - but not enough to read from
             let optypes = 0b10101111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01,
             ]);
@@ -638,13 +879,12 @@ mod tests {
 
             // provide large constant and variable
             let optypes = 0b00101111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Variable { value: 0x03 }),
@@ -655,7 +895,7 @@ mod tests {
 
             // provide large constant and variable - but not enough to read from
             let optypes = 0b00101111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01,
             ]);
@@ -664,13 +904,12 @@ mod tests {
             // provide three large constants - third will be ignored
             // (even if not enough mem is provided)
             let optypes = 0b00000011;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03, 0x04
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large{ value: [0x03, 0x04] }),
@@ -683,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_detects_variable_form_opcount_var() {
+    fn test_decode_operands_detects_variable_form_opcount_var() {
         for i in 0xe0..=0xff {
             let opcode: u8 = i & 0b11111;
 
@@ -694,13 +933,12 @@ mod tests {
 
             // provide 2 large constants
             let optypes = 0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03, 0x04,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large { value: [0x03, 0x04] }),
@@ -711,7 +949,7 @@ mod tests {
 
             // provide 2 large constants - but not enough to read from
             let optypes = 0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03,
             ]);
@@ -719,13 +957,12 @@ mod tests {
 
             // provide 3 large constants
             let optypes = 0b00000011;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 3,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large { value: [0x03, 0x04] }),
@@ -739,13 +976,12 @@ mod tests {
             // ommitted -> ignore third operand and interpret
             // as 2OP
             let optypes = 0b00001100;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
                 0x01, 0x02, 0x03, 0x04
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 2,
+            let expected = ZOperands {
+                offset: 2,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large { value: [0x03, 0x04] }),
@@ -754,17 +990,15 @@ mod tests {
             };
             assert_eq!(decoded, expected);
 
-
-
         }
     }
 
     #[test]
-    fn test_decode_detects_variable_form_opcount_var_except_12_and_26() {
+    fn test_decode_operands_detects_variable_form_opcount_var_except_12_and_26() {
         for i in 0xe0..=0xff {
             let opcode: u8 = i & 0b11111;
 
-            // skip double var instructions
+            // skip non-double var instructions
             if opcode != 12 && opcode != 26 {
                 continue;
             }
@@ -772,7 +1006,7 @@ mod tests {
             // provide 6 large constants - but not enough
             // memory to read the types
             let optypes = 0b0000000;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes,
             ]);
             assert_eq!(decoded, None);
@@ -781,7 +1015,7 @@ mod tests {
             // memory to read the operands
             let optypes0 = 0b00000000;
             let optypes1 = 0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes0, optypes1,
             ]);
             assert_eq!(decoded, None);
@@ -789,15 +1023,14 @@ mod tests {
             // provide 6 large constants
             let optypes0 = 0b00000000;
             let optypes1 =0b00001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes0, optypes1,
                 0x01, 0x02, 0x03, 0x04,
                 0x01, 0x02, 0x03, 0x04,
                 0x01, 0x02, 0x03, 0x04,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 6,
+            let expected = ZOperands {
+                offset: 3,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Large { value: [0x03, 0x04] }),
@@ -813,7 +1046,7 @@ mod tests {
             // provide 4 large constants - mix with variable and short
             let optypes0 = 0b00010000;
             let optypes1 =0b10001111;
-            let decoded = decode_instruction(vec![
+            let decoded = decode_operands(vec![
                 i, optypes0, optypes1,
                 0x01, 0x02,
                 0x03,
@@ -821,9 +1054,8 @@ mod tests {
                 0x04,
                 0x01, 0x02,
             ]).unwrap();
-            let expected = ZInstruction {
-                opcode: opcode,
-                operand_count: 6,
+            let expected = ZOperands {
+                offset: 3,
                 operands: [
                     Some(ZOperand::Large { value: [0x01, 0x02] }),
                     Some(ZOperand::Small { value: 0x03 }),
